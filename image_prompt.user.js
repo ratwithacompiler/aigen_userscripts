@@ -327,8 +327,13 @@ async function image_process(imgel) {
         url = url.slice(0, url.indexOf("?"));
     }
 
-    // get first 4KB of PNG data into an unsigned buffer
-    const resp = await http_range_beginning_request(url, 4096);
+    // get first 8KB of PNG data into an unsigned buffer.
+    // in case of error try again with 60KB because some people have a *dumb* amount
+    // of negative prompts in them, like I've seen ones with 13kb ...
+    const buffer_size_1 = 1024 * 8;
+    const buffer_size_2 = 1024 * 60;
+
+    const resp = await http_range_beginning_request(url, buffer_size_1);
     const signedbuffer = await resp.response.arrayBuffer();
     const buffer = new Uint8Array(signedbuffer);
 
@@ -336,10 +341,28 @@ async function image_process(imgel) {
     try {
         metadata = png_metadata_exports.readMetadata(buffer);
     } catch (e) {
-        console.log("readMetadata error", e, url);
-        create_metadata_error_overlay(imgel);
-        return
+        console.log("readMetadata error 1, trying again with bigger buffer size", e, buffer_size_2, url);
+        const resp = await http_range_beginning_request(url, buffer_size_2);
+        const signedbuffer = await resp.response.arrayBuffer();
+        const buffer = new Uint8Array(signedbuffer);
+
+        try {
+            metadata = png_metadata_exports.readMetadata(buffer);
+            console.log("bigger buffer size was ok", buffer_size_2, url)
+        } catch (e) {
+            console.log("readMetadata error 2, trying again with null ignore", e, url);
+            try {
+                metadata = png_metadata_exports.readMetadata(buffer, true);
+            } catch (e) {
+                console.log("readMetadata error 3", e, url);
+                create_metadata_error_overlay(imgel);
+                return
+            }
+
+
+        }
     }
+
 
     if (metadata && metadata.tEXt) {
         // console.log(metadata.tEXt);
@@ -358,7 +381,7 @@ function png_metadata() {
     THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     */
 
-    function textDecode(data) {
+    function textDecode(data, ignore_null_errors) {
         if (data.data && data.name) {
             data = data.data
         }
@@ -380,7 +403,8 @@ function png_metadata() {
                 if (code) {
                     text += String.fromCharCode(code)
                 } else {
-                    throw new Error('Invalid NULL character found. 0x00 character is not permitted in tEXt content')
+                    if (!ignore_null_errors)
+                        throw new Error('Invalid NULL character found. 0x00 character is not permitted in tEXt content')
                 }
             }
         }
@@ -476,7 +500,7 @@ function png_metadata() {
     }
 
 
-    function readMetadata(buffer) {
+    function readMetadata(buffer, ignore_null_errors) {
         let result = {};
         const chunks = extractChunks(buffer);
         chunks.forEach(chunk => {
@@ -485,7 +509,7 @@ function png_metadata() {
                     if (!result.tEXt) {
                         result.tEXt = {};
                     }
-                    let textChunk = textDecode(chunk.data);
+                    let textChunk = textDecode(chunk.data, ignore_null_errors);
                     result.tEXt[textChunk.keyword] = textChunk.text;
                     break
                 default:
