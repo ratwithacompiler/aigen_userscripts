@@ -23,6 +23,22 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 const ENABLE_NO_METADATA_BADGE = 1; // 0=OFF  1=ON   if on shows a little red "N" badge on images that don't have any metadata
 
+/*
+*
+*
+*
+*
+*
+*
+*
+*
+*
+*
+* */
+
+
+const STYLE_NAME = "image_prompt_styleee";
+
 function flatten_children(el_or_els, nodename = undefined, target = null) {
     // console.log("flatten_children", el_or_els);
     if (!Array.isArray(el_or_els))
@@ -56,13 +72,13 @@ function dom_images_check() {
 
 function mutation_observer_init() {
     // monitor DOM for additions of new img tags and process when added
-    var body = document.body;
-    var callback = function (mutationsList, observer) {
+    const body = document.body;
+    const callback = function (mutationsList, observer) {
         // console.log("mutationsList", mutationsList);
-        for (var mutation of mutationsList) {
+        for (const mutation of mutationsList) {
             if (mutation.type === 'childList') {
-                // const nodes = Array.from(mutation.addedNodes);
-                const nodes = Array.from(mutation.target.children);
+                const nodes = Array.from(mutation.addedNodes);
+                // const nodes = Array.from(mutation.target.children);
                 if (nodes.length) {
                     const children = flatten_children(nodes, "IMG");
                     // console.log("children", children.length)
@@ -73,14 +89,17 @@ function mutation_observer_init() {
             }
         }
     }
-    var observer = new MutationObserver(callback);
-    var config = {
+    const config = {
         // characterData: true,
         attributes: false,
         childList: true,
         subtree: true
     };
+
+    const observer = new MutationObserver(callback);
     observer.observe(body, config);
+
+    return observer;
 }
 
 function image_check(imgel) {
@@ -96,14 +115,21 @@ function image_is_relevant(imgel) {
     // any discord embed/attachment png files might contain metadata
 
     // TODI: could just check for only png in case of 3rd party urls too? should be fine
-    // if (imgel.currentSrc && imgel.currentSrc.indexOf(".png") >= 0)
-    //     return true;
+    // if (!imgel.currentSrc || imgel.currentSrc.indexOf(".png") === -1)
+    //     return false;
+
+    if (imgel.parentElement && !(imgel.parentElement.className || "").startsWith("clickableWrapper")) {
+        // focused image view after image was clicked, don't want to show popup on that really
+        console.log("nope")
+        return false;
+    }
 
     if (imgel.currentSrc
         && imgel.currentSrc.startsWith("https://media.discordapp.net/attachments")
         && imgel.currentSrc.toLowerCase().indexOf(".png") >= 0
     )
         return true;
+
 
     return false;
 }
@@ -149,7 +175,6 @@ function http_range_beginning_request(url, bytes = 4096) {
 
 function insert_style() {
     const css = `
-        
         .copy_button{
             background-color: white;
             border: 2px solid black;
@@ -161,7 +186,7 @@ function insert_style() {
             margin-top: 4px;
         }   
              
-        .info_badge, .info_missing_badge{
+        .info_badge, .info_missing_badge, .info_error_badge {
             position: absolute;
             background-color: white;
             padding: 6px;
@@ -174,11 +199,14 @@ function insert_style() {
             text-align:center;
             
         }
-        
         .info_missing_badge{
-            // background-color: #bf2424;
+            background-color: #dcca35;
+            opacity: 0.4;
+        }
+        
+        .info_error_badge{
             background-color: red;
-            opacity: 0.3;
+            opacity: 0.6;
         }
         
         
@@ -216,6 +244,7 @@ function insert_style() {
 
     head.appendChild(style);
     style.type = 'text/css';
+    style.id = STYLE_NAME;
     style.appendChild(document.createTextNode(css));
 }
 
@@ -280,6 +309,13 @@ function create_metadata_missing_overlay(imgel) {
     imgel.parentElement.parentElement.parentElement.prepend(info_div);
 }
 
+function create_metadata_error_overlay(imgel) {
+    const info_div = document.createElement("div");
+    info_div.innerText = " ER ";
+    info_div.className = "info_error_badge";
+    imgel.parentElement.parentElement.parentElement.prepend(info_div);
+}
+
 async function image_process(imgel) {
     // range request to get first N bytes of image.
     // extract png info if present.
@@ -296,7 +332,15 @@ async function image_process(imgel) {
     const signedbuffer = await resp.response.arrayBuffer();
     const buffer = new Uint8Array(signedbuffer);
 
-    const metadata = png_metadata_exports.readMetadata(buffer);
+    let metadata;
+    try {
+        metadata = png_metadata_exports.readMetadata(buffer);
+    } catch (e) {
+        console.log("readMetadata error", e, url);
+        create_metadata_error_overlay(imgel);
+        return
+    }
+
     if (metadata && metadata.tEXt) {
         // console.log(metadata.tEXt);
         create_metadata_overlay(imgel, metadata.tEXt);
@@ -365,10 +409,9 @@ function png_metadata() {
         // Used for fast-ish conversion between uint8s and uint32s/int32s.
         // Also required in order to remain agnostic for both Node Buffers and
         // Uint8Arrays.
-        let uint8 = new Uint8Array(4)
-        let int32 = new Int32Array(uint8.buffer)
-        let uint32 = new Uint32Array(uint8.buffer)
-
+        let uint8 = new Uint8Array(4);
+        let int32 = new Int32Array(uint8.buffer);
+        let uint32 = new Uint32Array(uint8.buffer);
 
         try {
 
@@ -460,9 +503,38 @@ function png_metadata() {
 }
 
 
+function stop(state) {
+    if (state.observer) {
+        console.log("disconnecting observer");
+        state.observer.disconnect();
+        state.observer = undefined;
+    } else {
+        console.log("no observer");
+    }
+
+    const style = document.getElementById(STYLE_NAME);
+    if (style) {
+        console.log("removing style head", STYLE_NAME);
+        style.remove();
+    }
+}
+
 function main() {
-    console.log("discord png meta main");
-    mutation_observer_init();
+    console.log("discord png meta main", "asdf");
+    let state;
+    try {
+        if (DevState !== undefined)
+            state = DevState;
+    } catch {
+    }
+
+    if (state === undefined)
+        state = window.state || {run: 0};
+
+    state.run++;
+    stop(state);
+
+    state.observer = mutation_observer_init();
     insert_style();
     dom_images_check();
 }
