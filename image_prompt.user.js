@@ -120,7 +120,7 @@ function image_is_relevant(imgel) {
 
     if (imgel.parentElement && !(imgel.parentElement.className || "").startsWith("clickableWrapper")) {
         // focused image view after image was clicked, don't want to show popup on that really
-        console.log("nope")
+        // console.log("nope")
         return false;
     }
 
@@ -195,7 +195,7 @@ function insert_style() {
             opacity: 0.5;
             cursor: pointer;
             z-index: 10000;
-            width: 16px;
+            width: 20px;
             text-align:center;
             
         }
@@ -209,21 +209,22 @@ function insert_style() {
             opacity: 0.6;
         }
         
-        
-        .popup_outer{
+        .pure_css_popup_outer{
             display:none;
 
             left: 20px;
-            position: absolute;
+            position: fixed;
             z-index: 20000;
-            
+
             background-color: white;
             padding: 7px;
             border-radius: 5px;
             // border: 2px solid black;
         }
         
-        .popup_content{
+        .pure_css_popup_content{
+            z-index: 20000;
+            
             padding: 2px;
             margin: 2px;
             display: flex;
@@ -233,11 +234,18 @@ function insert_style() {
             line-height:normal;
             overflow-y:auto;
         }
-        
-        .info_badge:hover~.popup_outer, .popup_outer:hover{
+
+        .info_badge:hover~.pure_css_popup_outer, .pure_css_popup_outer:hover{
              display: block;
         }
-    
+        
+        div[class*="embedMedia-"]{
+            /*workaround to make fixed div worked normally in embeds with multiple images 
+            since those set contain:paint which puts position: fixed relative to its parent instead 
+            of the viewport as expected. Not great but yeah. */
+            contain: none !important;
+        }
+        
     `;
     const head = document.head || document.getElementsByTagName('head')[0];
     const style = document.createElement('style');
@@ -252,7 +260,7 @@ function is_string(maybe_string) {
     return typeof maybe_string === 'string' || maybe_string instanceof String;
 }
 
-function create_metadata_overlay(imgel, metainfo) {
+function metainfo_strings(metainfo) {
     const keyvals = [];
     const vals = [];
     for (const [key, val] of Object.entries(metainfo)) {
@@ -268,7 +276,19 @@ function create_metadata_overlay(imgel, metainfo) {
     }
     const metastr = keyvals.join("\n");
     const valuesstr = vals.join("\n");
+    return [metastr, valuesstr];
+}
 
+function create_metadata_overlay_pure_css(imgel, metainfo) {
+    // Create popup with just pure css right next to or in a close parent of the actual image,
+    // feels cleaner but pretty annoying  cause it easily breaks whenever they change
+    // any of the layout of the main message view.
+    // Also annoying cause the surrounding layout of where images are can be very different
+    // in sections like forums or with embeds and others, so all of those would need slightly
+    // different insert code (mainly as to which parent and where to insert into specifically),
+    // can't just do simply because in a lot of places you can't go outside of the bounds
+    // of the closer parents even with position absolute and z-index cause of the css above.
+    const [metastr, valuesstr] = metainfo_strings(metainfo)
     const copy_to_cb = () => {
         console.log("copying to cb");
         navigator.clipboard.writeText(valuesstr);
@@ -279,10 +299,10 @@ function create_metadata_overlay(imgel, metainfo) {
     info_div.className = "info_badge";
 
     const popup_outer = document.createElement("div");
-    popup_outer.className = "popup_outer";
+    popup_outer.className = "pure_css_popup_outer";
 
     const popup_content = document.createElement("div");
-    popup_content.className = "popup_content";
+    popup_content.className = "pure_css_popup_content";
     popup_content.innerText = metastr;
 
     const copy_label = document.createElement("div");
@@ -294,13 +314,100 @@ function create_metadata_overlay(imgel, metainfo) {
 
     imgel.parentElement.parentElement.parentElement.prepend(popup_outer);
     imgel.parentElement.parentElement.parentElement.prepend(info_div);
-    info_div.onclick = (e) => {
-        copy_to_cb();
-    }
-    copy_label.onclick = (e) => {
-        copy_to_cb();
-    }
+
+
+    info_div.onclick = (e) => copy_to_cb();
+    copy_label.onclick = (e) => copy_to_cb();
 }
+
+function create_metadata_overlay_js_pos_fix(imgel, metainfo) {
+    //
+    const [metastr, valuesstr] = metainfo_strings(metainfo)
+    const copy_to_cb = () => {
+        console.log("copying to cb");
+        navigator.clipboard.writeText(valuesstr);
+    };
+
+    const info_div = document.createElement("div");
+    info_div.innerText = " P ";
+    info_div.className = "info_badge";
+
+    const popup_outer = document.createElement("div");
+    popup_outer.className = "pure_css_popup_outer";
+
+    const popup_content = document.createElement("div");
+    popup_content.className = "pure_css_popup_content";
+    popup_content.innerText = metastr;
+
+    const copy_label = document.createElement("div");
+    copy_label.innerText = " Copy ";
+    copy_label.className = "copy_button";
+    popup_outer.appendChild(popup_content);
+    // popup_content.appendChild(copy_label);
+    popup_outer.appendChild(copy_label);
+
+    imgel.parentElement.prepend(popup_outer);
+    imgel.parentElement.prepend(info_div);
+
+    // const rect = info_div.getBoundingClientRect();
+    // popup_outer.style.top = (rect.top + 14) + "px";
+    // popup_outer.style.left = (rect.left + 14) + "px";
+
+    info_div.onmouseover = function (ev) {
+        const rect = ev.target.getBoundingClientRect();
+        console.log("mouseover  ", rect.top, rect);
+        // console.log("mouseover", ev, rect.top)
+        const offset_x = 14;
+        const offset_y = 14;
+
+        const target_x = rect.left + offset_x
+        popup_outer.style.left = target_x + "px";
+
+        const target_y = rect.top + offset_y
+        popup_outer.style.top = target_y + "px";
+
+        // Fix for when position: fixed is not relative to viewport
+        // but to a parent, happens when using css contain:paint like discord does
+        // or when using perspective/transform/filter and probably some other things.
+        // Shouldn't be needed since currently disabling contains: paint for embeds
+        // as a workaround.
+        //
+        // const popup_rect = popup_outer.getBoundingClientRect();
+        // const rect_ev = ev.target.getBoundingClientRect();
+        // const diff = (rect_ev.top + offset_y) - popup_rect.top;
+        // console.log("rect_ev    ", rect.top, rect);
+        // console.log("popup_rect", popup_rect.top, rect);
+        // console.log("diff      ", diff);
+        // if (Math.abs(diff) >= 5) {
+        //     popup_outer.style.top = (target_y + diff) + "px";
+        //     console.log("fix     ", (target_y + diff));
+        // }
+        // popup_outer.style.left = (rect.left + 14) + "px";
+    }
+
+
+    info_div.onclick = (e) => copy_to_cb();
+    copy_label.onclick = (e) => copy_to_cb();
+}
+
+
+function insert_popup(type, id = "metadata_popup", prepend = false) {
+    const existing = document.getElementById(id);
+    if (existing)
+        existing.remove();
+
+    const body = document.body || document.getElementsByTagName("body")[0];
+    const div = document.createElement(type);
+    div.type = "text/html";
+    div.id = id;
+    if (prepend)
+        body.prepend(div);
+    else
+        body.appendChild(div);
+
+    return div;
+}
+
 
 function create_metadata_missing_overlay(imgel) {
     const info_div = document.createElement("div");
@@ -363,10 +470,10 @@ async function image_process(imgel) {
         }
     }
 
-
     if (metadata && metadata.tEXt) {
         // console.log(metadata.tEXt);
-        create_metadata_overlay(imgel, metadata.tEXt);
+        // create_metadata_overlay_pure_css(imgel, metadata.tEXt);
+        create_metadata_overlay_js_pos_fix(imgel, metadata.tEXt);
     } else if (ENABLE_NO_METADATA_BADGE) {
         create_metadata_missing_overlay(imgel);
     }
