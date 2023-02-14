@@ -300,6 +300,7 @@ function create_metadata_overlay_pure_css(imgel, metainfo) {
 
     const popup_outer = document.createElement("div");
     popup_outer.className = "pure_css_popup_outer";
+    popup_outer.onclick = (e) => e.stopPropagation();
 
     const popup_content = document.createElement("div");
     popup_content.className = "pure_css_popup_content";
@@ -334,6 +335,7 @@ function create_metadata_overlay_js_pos_fix(imgel, metainfo) {
 
     const popup_outer = document.createElement("div");
     popup_outer.className = "pure_css_popup_outer";
+    popup_outer.onclick = (e) => e.stopPropagation();
 
     const popup_content = document.createElement("div");
     popup_content.className = "pure_css_popup_content";
